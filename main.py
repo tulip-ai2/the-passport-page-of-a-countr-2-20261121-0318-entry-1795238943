@@ -16,31 +16,38 @@ SC = 2  # supersample factor; every coordinate below is in final 1024-space * SC
 
 # ---------------------------------------------------------------- fonts ----
 
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+
+
+def vendored(name):
+    return os.path.join(FONT_DIR, name)
+
+
 SERIF_BOLD = [
-    "/usr/share/fonts/truetype/sand-box/custom/Source Serif Pro/SourceSerifPro-Semibold.ttf",
-    "/usr/share/fonts/truetype/sand-box/custom/Source Serif Pro/SourceSerifPro-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    vendored("SourceSerifPro-Semibold.ttf"),
+    vendored("SourceSerifPro-Bold.ttf"),
+    vendored("DejaVuSerif-Bold.ttf"),
 ]
 SERIF_BLACK = [
-    "/usr/share/fonts/truetype/sand-box/custom/Source Serif Pro/SourceSerifPro-Black.ttf",
-    "/usr/share/fonts/truetype/sand-box/custom/Source Serif Pro/SourceSerifPro-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    vendored("SourceSerifPro-Black.ttf"),
+    vendored("SourceSerifPro-Bold.ttf"),
+    vendored("DejaVuSerif-Bold.ttf"),
 ]
 SANS = [
-    "/usr/share/fonts/truetype/sand-box/custom/Source Sans Pro/SourceSansPro-Regular.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    vendored("SourceSansPro-Regular.ttf"),
+    vendored("DejaVuSans.ttf"),
 ]
 SANS_SEMI = [
-    "/usr/share/fonts/truetype/sand-box/custom/Source Sans Pro/SourceSansPro-Semibold.ttf",
-    "/usr/share/fonts/truetype/sand-box/custom/Source Sans Pro/SourceSansPro-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    vendored("SourceSansPro-Semibold.ttf"),
+    vendored("SourceSansPro-Bold.ttf"),
+    vendored("DejaVuSans-Bold.ttf"),
 ]
 MONO = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    vendored("DejaVuSansMono.ttf"),
 ]
 SCRIPT = [
-    "/usr/share/fonts/truetype/sand-box/google/Niconne/Niconne-Regular.ttf",
+    vendored("Niconne-Regular.ttf"),
+    vendored("SourceSerifPro-Semibold.ttf"),
 ]
 
 
@@ -51,7 +58,29 @@ def load_font(cands, size):
                 return ImageFont.truetype(path, size)
             except Exception:
                 pass
-    return ImageFont.load_default(size)
+    try:
+        return ImageFont.load_default(size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def font_ascent(font):
+    try:
+        return font.getmetrics()[0]
+    except Exception:
+        pass
+    try:
+        return font.size
+    except Exception:
+        return int(size_guess(font))
+
+
+def size_guess(font):
+    try:
+        box = font.getbbox("Ag")
+        return max(1, box[3] - box[1])
+    except Exception:
+        return 11
 
 
 # ------------------------------------------------------------- helpers ----
@@ -274,8 +303,11 @@ def arc_text(layer, cx, cy, r, text, font, fill, top=True):
     dirn = 1 if top else -1
     a0 = (-math.pi / 2 if top else math.pi / 2) - dirn * sum(spans) / 2
     a = a0
-    ascent, descent = font.getmetrics()
-    ch = ascent + descent
+    try:
+        ascent, descent = font.getmetrics()
+        ch = ascent + descent
+    except Exception:
+        ch = int(2.2 * size_guess(font))
     for i, (c, sp) in enumerate(zip(text, spans)):
         ang = a + (sp / 2) * dirn
         px = cx + r * math.cos(ang)
@@ -329,7 +361,7 @@ def oval_stamp(size, color, top, bottom, midlines, small=None):
     for i, ln in enumerate(midlines):
         f = f_mid if i == 0 else (f_small if small else f_mid)
         tw = d.textlength(ln, font=f)
-        d.text((cx - tw / 2, y - f.size // 2), ln, font=f, fill=color)
+        d.text((cx - tw / 2, y - font_ascent(f) // 2), ln, font=f, fill=color)
         y += 58 if f is f_mid else 40
     return layer
 
@@ -437,6 +469,19 @@ def tri(d, cx, cy, s, fill):
 
 # ------------------------------------------------------------- main -------
 
+def radial_gradient(size=256):
+    """L image: 0 at centre, 255 at corners (manual, Pillow-version safe)."""
+    g = Image.new("L", (size, size))
+    px = g.load()
+    c = (size - 1) / 2.0
+    maxr = math.hypot(c, c)
+    for y in range(size):
+        dy = y - c
+        for x in range(size):
+            px[x, y] = int(math.hypot(x - c, dy) / maxr * 255 + 0.5)
+    return g
+
+
 def render():
     W = H = 1024 * SC
     canvas = Image.new("RGBA", (W, H), DESK + (255,))
@@ -446,7 +491,7 @@ def render():
     noise = Image.effect_noise((W, H), 16)
     base = ImageChops.subtract(base, Image.merge("RGB", (noise, noise, noise)).point(
         lambda v: v // 20))
-    vig = Image.radial_gradient("L").resize((W, H)).point(lambda v: int(v * 0.22))
+    vig = radial_gradient().resize((W, H)).point(lambda v: int(v * 0.22))
     vig_overlay = Image.merge("RGBA", (
         Image.new("L", (W, H), 0),
         Image.new("L", (W, H), 0),
@@ -648,7 +693,7 @@ def render():
     canvas.alpha_composite(sp)
 
     # slight warm light across the spread from top-left
-    glow = Image.radial_gradient("L")
+    glow = radial_gradient()
     glow = Image.eval(glow, lambda v: 255 - v)
     glow = glow.resize((W, H)).point(lambda v: int(v * 0.06))
     canvas = Image.alpha_composite(
